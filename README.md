@@ -62,7 +62,7 @@ clime::message_manager<my_message> my_message_manager;
 
 In case you have several message types, just put them as a comma-separated list as the template arguments of `clime::message_manager` (internally, it is using template [parameter packs](https://en.cppreference.com/w/cpp/language/parameter_pack) to create as many message queues as there are message classes).
 
-Message classses are not bound to specific threads. You may send and receive messages in arbitrary threads (even the same one). To send a message in this example, you need to create a message instance and send it:
+Message classes are not bound to specific threads. You may send and receive messages in arbitrary threads (even the same one). To send a message in this example, you need to create a message instance and send it:
 
 ```cpp
 auto msg = std::make_shared<my_message>(42);
@@ -76,7 +76,7 @@ auto message_for_us = message_manager.receive_message<my_message>();
 
 Several worker threads may receive the same message - whenever it is received, the message queue will automatically drop it. If the worker thread changes its mind after seeing the message, it may put the message back to the message queue simply by sending it again.
 
-Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for this message later. If you want to wait for a message, just write
+Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that has been specified in the template argument). If there is none, it will return a `nullptr`, so the calling thread knows it can continue to take care of other things and re-check for this message class later. If you want to wait for a message, just write
 
 ```cpp
 auto message_for_us = message_manager.receive_message<my_message>(true);
