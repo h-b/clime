@@ -21,8 +21,7 @@ For example in UI libraries this is a common requirement to avoid blocking the U
 Generally there is no reason 
 other than C++ language design why one class usually waits for another class to do its job
 (e. g. when calling a function of a member class),
-although it could happily take care of other things meanwhile. That's why the go programming language
-has its [own statement](https://golang.org/ref/spec#Go_statements) for this scenario.
+although it could happily take care of other things meanwhile.
 
 In contrast to the robust and easy to use concurrency functions of the go language, which even has [its own statement](https://golang.org/ref/spec#Go_statements) for this scenario, I personally always need to re-think when using C++ concepts like [std::condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable) and find myself debugging deadlocks. This is why I implemented this small, general-purpose header.
 
