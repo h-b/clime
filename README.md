@@ -59,7 +59,7 @@ First you need to tell the library about all message classes that you will be se
 clime::message_manager<my_message> my_message_manager;
 ```
 
-In case you have several message types, just put them as a comma-separated list as the template arguments of `clime::message_manager` (internally, it is using template [parameter packs](https://en.cppreference.com/w/cpp/language/parameter_pack) to create as many message queues as there are message classes).
+In case you have several message types, just put them as a comma-separated list as the template arguments of `clime::message_manager` (internally, it is using template [parameter pack expansion](https://en.cppreference.com/w/cpp/language/parameter_pack) to create as many message queues as there are message classes).
 
 Message classes are not bound to specific threads. You may send and receive messages in arbitrary threads (even the same one). To send a message in this example, you need to create a message instance and send it:
 
