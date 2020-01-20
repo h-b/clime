@@ -76,7 +76,7 @@ auto message_for_us = message_manager.receive_message<my_message>();
 
 Several worker threads may receive the same message - whenever it is received, the message queue will automatically drop it. If the worker thread changes its mind after seeing the message, it may put the message back to the message queue simply by sending it again.
 
-Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If you want to wait for a message, just write
+Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for this message later. If you want to wait for a message, just write
 
 ```cpp
 auto message_for_us = message_manager.receive_message<my_message>(true);
