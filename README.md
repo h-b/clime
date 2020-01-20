@@ -13,7 +13,7 @@ In order to use it, C++14 is required. You just need to include a single header:
 ```
 
 ## Motivation
-The library warps the C++11 thread support functions to clearly separate tasks in an application,
+The library wraps the C++11 thread support functions to clearly separate tasks in an application,
 not only regarding the class design but the runtime behaviour. This way no needless blocking of class instances happens that
 should work independent from each other (like one uses std::future for a temporary worker). 
 For example in UI libraries this is a common requirement to avoid blocking the UI.
