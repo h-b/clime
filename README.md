@@ -90,8 +90,7 @@ auto message_for_us = message_manager.receive_message<my_message>(true);
 ### How to send a delayed message
 
 `message_manager::send_message` offers an overload where you can specify a duration after which the
-message will be sent. Of course `message_manager::send_message` will return instantly to the caller,
-the delay is done asynchronously. For example you can write:
+message will be sent. Of course the delay is done asynchronously, so it will return instantly. For example you can write:
 
 ```cpp
 auto msg = std::make_shared<my_message>(42);
@@ -107,6 +106,6 @@ auto msg = std::make_shared<my_message>(42);
 message_manager.send_message(msg, 1000);
 ```
 
-Of course this requires that there actually is a worker thread that consumes messages (particularly when the application shuts down) to avoid deadlocks.
+Of course this requires that there actually is a worker thread that consumes messages (particularly when the application shuts down), otherwise `send_message` will wait forever.
 
 That's all :-) To dig deeper, please run the example, which calculates prime numbers in an arbitrary number of worker threads.
