@@ -15,10 +15,10 @@ In order to use it, C++14 is required. You just need to include a single header:
 ## Motivation
 The library warps the C++11 thread support functions to clearly separate tasks in an application,
 not only regarding the class design but the runtime behaviour. This way no needless blocking of class instances happens that
-should work independent from each other (like one uses std::future for a temporary worker). 
+should work independent from each other (like one uses std::future for a temporary worker).
 For example in UI libraries this is a common requirement to avoid blocking the UI.
 
-Generally there is no reason 
+Generally there is no reason
 other than C++ language design why one class usually waits for another class to do its job
 (e. g. when calling a function of a member class),
 although it could happily take care of other things meanwhile. That's why the go programming language
@@ -26,7 +26,7 @@ has its [own statement](https://golang.org/ref/spec#Go_statements) for this scen
 
 In contrast to the robust and easy to use concurrency functions of the go language, which even has [its own statement](https://golang.org/ref/spec#Go_statements) for this scenario, I personally always need to re-think when using C++ concepts like [std::condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable) and find myself debugging deadlocks. This is why I implemented this small, general-purpose header.
 
-## Documentation
+## Using the library
 
 The library provides a class `message_manager` with two public methods. One to send messages
 ```cpp
@@ -47,7 +47,7 @@ public:
 		: number_(number)
 	{
 	}
-	
+
 	const int number_;
 };
 ```
@@ -76,7 +76,10 @@ auto message_for_us = message_manager.receive_message<my_message>();
 
 Several worker threads may receive the same message - whenever it is received, the message queue will automatically drop it. If the worker thread changes its mind after seeing the message, it may put the message back to the message queue simply by sending it again.
 
-Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for this message later. If you want to wait for a message, just write
+## Modify default behaviour
+### How to wait for a certain message type
+
+Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for messages later. If you want to wait for a message, just write
 
 ```cpp
 auto message_for_us = message_manager.receive_message<my_message>(true);
@@ -84,6 +87,26 @@ auto message_for_us = message_manager.receive_message<my_message>(true);
 
 `message_manager::receive_message` has a default parameter `bool wait_for_message=false`.
 
-When sending messages, there may be the (rare) situation that you want to avoid sending an extreme amount of messages that you know that the worker thread will never be able to process. For this situation you can set the optional argument `unsigned int max_queued_messages` to a reasonable maximum number of messages. If the size of the message queue is `max_queued_messages`, then `message_manager::send_message` will wait until the message queue has become shorter.
+### How to send a delayed message
+
+`message_manager::send_message` offers an overload where you can specify a duration after which the
+message will be sent. Of course `message_manager::send_message` will return instantly to the caller,
+the delay is done asynchronously. For example you can write:
+
+```cpp
+auto msg = std::make_shared<my_message>(42);
+message_manager.send_message(msg, std::chrono::milliseconds(500));
+```
+
+### How to avoid exploding message queues
+
+When sending messages, there may be situations where you want to make sure your worker thread does keep up processing the messages you send to avoid that the message queue becomes longer and longer, eventually causing a memory problem. Then you can set the optional argument `unsigned int max_queued_messages` to a reasonable maximum number of messages. If the size of the message queue is `max_queued_messages`, then `message_manager::send_message` will wait (block your thread) until the message queue has become shorter. For example:
+
+```cpp
+auto msg = std::make_shared<my_message>(42);
+message_manager.send_message(msg, 1000);
+```
+
+Of course this requires that there actually is a worker thread that consumes messages (particularly when the application shuts down) to avoid deadlocks.
 
 That's all :-) To dig deeper, please run the example, which calculates prime numbers in an arbitrary number of worker threads.

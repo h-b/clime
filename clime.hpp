@@ -6,6 +6,8 @@
 #include <mutex>
 #include <condition_variable>
 #include <utility>
+#include <future>
+#include <chrono>
 
 #if __cplusplus < 201402L
 #error You need at least C++14 for clime.hpp. Please check example/CMakeLists.txt on how to set compiler options. Reason: This code uses std::get<T> to extract the elements of a std::tuple whose type is T.
@@ -34,6 +36,16 @@ namespace clime
 			cv_.notify_one();
 		}
 		
+		template<typename MessageType, typename Rep, typename Period>
+		void send_message(std::shared_ptr<MessageType> msg, const std::chrono::duration<Rep, Period>& delay_duration)
+		{
+			(void)std::async(std::launch::async, [msg,delay_duration,this]()
+			{
+				std::this_thread::sleep_for(delay_duration);
+				send_message(msg);
+			});
+		}
+
 		template<typename MessageType>
 		std::shared_ptr<MessageType> receive_message(bool wait_for_message=false)
 		{

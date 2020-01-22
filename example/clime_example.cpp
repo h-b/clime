@@ -6,10 +6,29 @@
 #include <functional>
 #include <cmath>
 
-class message_for_prime_printer // tells prime_printer that value is prime
+// message type to asks a prime_checker to calculate if a value is prime
+class message_for_prime_checker
 {
 public:
-	message_for_prime_printer(uint64_t prime_number)
+	explicit message_for_prime_checker(uint64_t number)
+		: number_(number)
+	{
+	}
+
+	uint64_t get_number()
+	{
+		return number_;
+	}
+
+private:
+	const uint64_t number_;
+};
+
+// message type to tell prime_printer that a value is prime
+class message_for_prime_printer
+{
+public:
+	explicit message_for_prime_printer(uint64_t prime_number)
 		: prime_number_(prime_number)
 	{
 	}
@@ -23,46 +42,38 @@ private:
 	const uint64_t prime_number_;
 };
 
-class message_for_prime_checker // asks a prime_checker to calculate if value is prime
-{
-public:
-	message_for_prime_checker(uint64_t number)
-		: number_(number)
-	{
-	}
-	
-	uint64_t get_number()
-	{
-		return number_;
-	}
-	
-private:
-	const uint64_t number_;
-};
+using message_manager_type = clime::message_manager<message_for_prime_checker, message_for_prime_printer>;
 
-using message_manager_type = clime::message_manager<message_for_prime_printer, message_for_prime_checker>;
-
+// This class has two tasks:
+// (1) Sending potential prime numbers to one of the checker threads.
+// (2) Receiving messages from checker threads carrying confirmed primes, and printing them.
 class prime_printer
 {
 public:
-	prime_printer(std::shared_ptr<message_manager_type> message_manager)
+	explicit prime_printer(message_manager_type& message_manager)
 		: message_manager_(message_manager)
 	{
 	}
 	
 	void run(uint64_t start_prime)
 	{
-		const unsigned int max_queued_messages = 100; // avoid that this thread needlessly steals CPU time by sending messages that will never be received
+		// max_queued_messages avoids that this thread needlessly steals CPU time by sending messages that will never be received.
+		// This increases performance a bit, but requires correct order of shutdown of the threads - first this thread, then the checkers (workers).
+		// See note at the end of this file.
+		const unsigned int max_queued_messages = 100;
 		uint64_t p=start_prime;
 		
 		if (p%2==0) ++p; // make it odd, as we do not check even numbers if they are prime
 		
 		while (running)
 		{
+			// Create message to checker thread carrying the current potential prime numbe p. Then send it.
 			auto msg = std::make_shared<message_for_prime_checker>(p);
-			message_manager_->send_message(msg, max_queued_messages); // in case the message queue has grown to max_queued_messages, send_message will block until queue is shorter
+			message_manager_.send_message(msg, max_queued_messages); // in case the message queue has grown to max_queued_messages, send_message will block until queue is shorter
 			
-			auto message_for_us = message_manager_->receive_message<message_for_prime_printer>(false); // we do not wait for a message from prime_checker, because it may have processed all our messages, so we need to continue sending messages to prime_checker
+			// Try to get a message from a checker thread that would confirm a number to be prime that we sent in the past.
+			// If there is no such message, it might be that no checker thread has finished yet, or we already processed all messaegs from checker threads.
+			auto message_for_us = message_manager_.receive_message<message_for_prime_printer>(false);
 			if (message_for_us)
 			{
 				std::cout << message_for_us->get_prime() << " ";
@@ -75,13 +86,15 @@ public:
 	std::atomic<bool> running{true};
 	
 private:
-	std::shared_ptr<message_manager_type> message_manager_;
+	message_manager_type& message_manager_;
 };
 
+// This class checks if numbers are prime and, if so, sends a message to the printer thread so it will printed.
+// The number we need to check arrives here as a message from another thread (the printer, which has two tasks: asking for checks and printing).
 class prime_checker
 {
 public:
-	prime_checker(std::shared_ptr<message_manager_type> message_manager)
+	explicit prime_checker(message_manager_type& message_manager)
 		: message_manager_(message_manager)
 	{
 	}
@@ -90,15 +103,16 @@ public:
 	{
 		while (running)
 		{
-			auto message_for_us = message_manager_->receive_message<message_for_prime_checker>(true);
+			auto message_for_us = message_manager_.receive_message<message_for_prime_checker>(true);
 			if (message_for_us)
 			{
 				const uint64_t number_to_check = message_for_us->get_number();
 				
 				if (is_prime(number_to_check))
 				{
+					// We found that the number is prime, so send a message back to the printer.
 					auto msg = std::make_shared<message_for_prime_printer>(number_to_check);
-					message_manager_->send_message(msg);
+					message_manager_.send_message(msg);
 				}
 			}
 		}
@@ -107,7 +121,7 @@ public:
 	std::atomic<bool> running{true};
 	
 private:
-	std::shared_ptr<message_manager_type> message_manager_;
+	message_manager_type& message_manager_;
 	
 	static bool is_prime(uint64_t p)
 	{
@@ -140,7 +154,7 @@ int main(int argc, char**argv)
 	const int       time_limit = std::atoi(argv[2]);
 	const int        n_threads = std::atoi(argv[3]);
 	
-	auto message_manager = std::make_shared<message_manager_type>();
+	message_manager_type message_manager;
 	
 	std::vector<std::shared_ptr<prime_checker>> prime_checkers;
 	std::vector<std::shared_ptr<std::thread>> prime_checker_threads;
@@ -156,11 +170,13 @@ int main(int argc, char**argv)
 
 	std::this_thread::sleep_for(std::chrono::seconds(time_limit));
 
-	// stop threads
-	for (int i = 0; i < n_threads; ++i) prime_checkers[i]->running = false;
-	for (int i = 0; i < n_threads; ++i) prime_checker_threads[i]->join();
+	// Stop threads - first the printer, because it may be waiting for checkers to consume messages.
+	// If we would stop the worker threads first, the printer might be waiting indefinitely that the message queue becomes shorter.
 	printer.running = false;
 	prime_printer_thread.join();
+
+	for (int i = 0; i < n_threads; ++i) prime_checkers[i]->running = false;
+	for (int i = 0; i < n_threads; ++i) prime_checker_threads[i]->join();
 
 	return 0;
 }
