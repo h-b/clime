@@ -13,7 +13,7 @@ In order to use it, C++14 is required. You just need to include a single header:
 ```
 
 ## Motivation
-The library warps the C++11 thread support functions to clearly separate tasks in an application,
+The library wraps the C++11 thread support functions to clearly separate tasks in an application,
 not only regarding the class design but the runtime behaviour. This way no needless blocking of class instances happens that
 should work independent from each other (like one uses std::future for a temporary worker).
 For example in UI libraries this is a common requirement to avoid blocking the UI.
@@ -21,8 +21,7 @@ For example in UI libraries this is a common requirement to avoid blocking the U
 Generally there is no reason
 other than C++ language design why one class usually waits for another class to do its job
 (e. g. when calling a function of a member class),
-although it could happily take care of other things meanwhile. That's why the go programming language
-has its [own statement](https://golang.org/ref/spec#Go_statements) for this scenario.
+although it could happily take care of other things meanwhile.
 
 In contrast to the robust and easy to use concurrency functions of the go language, which even has [its own statement](https://golang.org/ref/spec#Go_statements) for this scenario, I personally always need to re-think when using C++ concepts like [std::condition_variable](https://en.cppreference.com/w/cpp/thread/condition_variable) and find myself debugging deadlocks. This is why I implemented this small, general-purpose header.
 
@@ -60,18 +59,18 @@ First you need to tell the library about all message classes that you will be se
 clime::message_manager<my_message> my_message_manager;
 ```
 
-In case you have several message types, just put them as a comma-separated list as the template arguments of `clime::message_manager` (internally, it is using template [parameter packs](https://en.cppreference.com/w/cpp/language/parameter_pack) to create as many message queues as there are message classes).
+In case you have several message types, just put them as a comma-separated list as the template arguments of `clime::message_manager` (internally, it is using template [parameter pack expansion](https://en.cppreference.com/w/cpp/language/parameter_pack) to create as many message queues as there are message classes).
 
-Message classses are not bound to specific threads. You may send and receive messages in arbitrary threads (even the same one). To send a message in this example, you need to create a message instance and send it:
+Message classes are not bound to specific threads. You may send and receive messages in arbitrary threads (even the same one). To send a message in this example, you need to create a message instance and send it:
 
 ```cpp
 auto msg = std::make_shared<my_message>(42);
-message_manager.send_message(msg)
+my_message_manager.send_message(msg)
 ```
 
 To process such a message you can receive it with
 ```cpp
-auto message_for_us = message_manager.receive_message<my_message>();
+auto message_for_us = my_message_manager.receive_message<my_message>();
 ```
 
 Several worker threads may receive the same message - whenever it is received, the message queue will automatically drop it. If the worker thread changes its mind after seeing the message, it may put the message back to the message queue simply by sending it again.
@@ -79,10 +78,10 @@ Several worker threads may receive the same message - whenever it is received, t
 ## Modify default behaviour
 ### How to wait for a certain message type
 
-Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that was specific in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for messages later. If you want to wait for a message, just write
+Per default, `message_manager::receive_message` will not wait until there is a suitable message (suitable meaning a message of the type that has been specified in the template argument). If there is none, it will return a nullptr, so the calling thread knows it can continue to take care of other things and re-check for messages later. If you want to wait for a message, just write
 
 ```cpp
-auto message_for_us = message_manager.receive_message<my_message>(true);
+auto message_for_us = my_message_manager.receive_message<my_message>(true);
 ```
 
 `message_manager::receive_message` has a default parameter `bool wait_for_message=false`.
