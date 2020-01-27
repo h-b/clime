@@ -30,6 +30,7 @@ SOFTWARE.
 
 #include <memory>
 #include <queue>
+#include <list>
 #include <mutex>
 #include <condition_variable>
 #include <functional>
@@ -48,7 +49,94 @@ namespace clime
 	template<typename... MessageTypes>
 	class message_manager
 	{
+	private:
+		template<typename MessageType>
+		class message_handler
+		{
+		public:
+			message_handler(message_manager& msg_manager,
+							std::function<void(const MessageType& message_type)> on_message,
+							std::function<void(const std::exception & exception)> on_exception = nullptr,
+							std::function<void()> on_idle=nullptr)
+				: msg_manager_(msg_manager)
+				, on_exception_(on_exception)
+				, thread_(std::thread([=]
+				{
+					run(on_message, on_idle);
+				}))
+			{
+			}
+
+			virtual ~message_handler()
+			{
+				try
+				{
+					if (thread_.joinable())
+					{
+						thread_.join();
+					}
+				}
+				catch (const std::exception & ex)
+				{
+					if (on_exception_)
+					{
+						on_exception_(ex);
+					}
+				}
+			}
+
+		protected:
+			message_manager& msg_manager_;
+			std::function<void(const std::exception& exception)> on_exception_;
+			std::thread thread_;
+
+			void run(std::function<void(const MessageType& message_type)> on_message,
+					 std::function<void()> on_idle)
+			{
+				const std::runtime_error unknown_exception("unknown exception");
+
+				while (msg_manager_.running_)
+				{
+					try
+					{
+						auto incoming_message = msg_manager_.template receive_message<MessageType>(on_idle==nullptr);
+
+						if (msg_manager_.running_)
+						{
+							if (incoming_message)
+							{
+								on_message(*incoming_message);
+							}
+							else if (on_idle)
+							{
+								on_idle();
+							}
+						}
+					}
+					catch(const std::exception& ex)
+					{
+						if (on_exception_ && msg_manager_.running_)
+						{
+							on_exception_(ex);
+						}
+					}
+					catch(...)
+					{
+						if (on_exception_ && msg_manager_.running_)
+						{
+							on_exception_(unknown_exception);
+						}
+					}
+				}
+			}
+		};
+
 	public:
+		message_manager()
+			: message_handler_(std::make_shared<std::tuple<std::list<std::shared_ptr<message_handler<MessageTypes>>>...>>())
+		{
+
+		}
 
 		virtual ~message_manager()
 		{
@@ -62,8 +150,9 @@ namespace clime
 				running_ = false;
 			}
 			cv_.notify_one();
+			message_handler_.reset();
 		}
-		
+
 		template<typename MessageType>
 		void send_message(std::shared_ptr<MessageType> msg, unsigned int max_queued_messages=0)
 		{
@@ -136,121 +225,24 @@ namespace clime
 			std::get<FunctionType>(logger_) = logger;
 		}
 		
-	private:
+		template<typename MessageType>
+		void add_handler(
+				std::function<void(const MessageType& message_type)> on_message,
+				std::function<void(const std::exception& exception)> on_exception=nullptr,
+				std::function<void()> on_idle=nullptr)
+		{
+			using HandlerListType = std::list<std::shared_ptr<message_handler<MessageType>>>;
+			HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
+			message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle));
+		}
+
+	protected:
 		std::tuple<std::queue<std::shared_ptr<MessageTypes>>...> messages_;
 		std::tuple<std::function<void(std::shared_ptr<MessageTypes>,bool)>...> logger_;
+		std::shared_ptr<std::tuple<std::list<std::shared_ptr<message_handler<MessageTypes>>>...>> message_handler_;
 		std::mutex mutex_messages_;
 		std::condition_variable cv_;
 		std::atomic<bool>running_{ true };
-	};
-
-	template<typename MessageType, typename MessageManagerType>
-	class message_handler
-	{
-	public:
-		message_handler(MessageManagerType& msg_manager,
-		                std::function<void(const MessageType& message_type)> on_message,
-		                std::function<void(const std::exception& exception)> on_exception=nullptr)
-		    : _msg_manager(msg_manager)
-			, on_exception_(on_exception)
-			, thread_(std::thread([=]
-			{
-				run(on_message, nullptr);
-			}))
-		{
-		}
-
-		message_handler(MessageManagerType& msg_manager,
-		                std::function<void(const MessageType& message_type)> on_message,
-						std::function<void()> on_idle,
-			            std::function<void(const std::exception& exception)> on_exception=nullptr)
-		    : _msg_manager(msg_manager)
-			, on_exception_(on_exception)
-			, thread_(std::thread([=]
-			{
-				run(on_message, on_idle);
-			}))
-		{
-		}
-
-		~message_handler()
-		{
-			try
-			{
-				dispose();
-				if (thread_.joinable())
-				{
-					thread_.join();
-				}
-			}
-			catch (const std::exception & ex)
-			{
-				if (on_exception_)
-				{
-					on_exception_(ex);
-				}
-			}
-		}
-
-		void dispose()
-		{
-			try
-			{
-				_msg_manager.dispose();
-				running_ = false;
-			}
-			catch (const std::exception& ex)
-			{
-				if (on_exception_)
-				{
-					on_exception_(ex);
-				}
-			}
-		}
-
-	private:
-		MessageManagerType& _msg_manager;
-		std::function<void(const std::exception& exception)> on_exception_;
-		std::thread thread_;
-		std::atomic<bool> running_{false};
-
-		void run(std::function<void(const MessageType& message_type)> on_message,
-				 std::function<void()> on_idle)
-		{
-			running_ = true;
-			const std::runtime_error unknown_exception("unknown exception");
-
-			while (running_)
-			{
-				try
-				{
-					auto incoming_message = _msg_manager.template receive_message<MessageType>(on_idle==nullptr);
-
-					if (incoming_message)
-					{
-						on_message(*incoming_message);
-					}
-					else
-					{
-						on_idle();
-					}
-				}
-				catch(const std::exception& ex)
-				{
-					if (on_exception_)
-					{
-						on_exception_(ex);
-					}
-				}
-				catch(...)
-				{
-					if (on_exception_)
-					{
-						on_exception_(unknown_exception);
-					}
-				}
-			}
-		}
 	};
 }
 

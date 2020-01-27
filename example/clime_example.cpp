@@ -4,57 +4,23 @@
 #include <functional>
 #include <cmath>
 
-// message type to asks a prime_checker to calculate if a value is prime
-class message_for_prime_checker
+// message type to asks a prime_checker to calculate if a value is prime. A message type can be a complex class with lots of data, because messages will never be copied
+struct message_for_prime_checker
 {
-public:
-	explicit message_for_prime_checker(uint64_t number)
-		: number_(number)
-	{
-	}
-
-	uint64_t get_number() const
-	{
-		return number_;
-	}
-
-private:
-	const uint64_t number_;
+	uint64_t number_to_check;
 };
 
 // message type to tell prime_printer that a value is prime
-class message_for_prime_printer
+struct message_for_prime_printer
 {
-public:
-	explicit message_for_prime_printer(uint64_t prime_number)
-		: prime_number_(prime_number)
-	{
-	}
-	
-	uint64_t get_prime() const
-	{
-		return prime_number_;
-	}
-	
-private:
-	const uint64_t prime_number_;
+	uint64_t prime_number;
 };
 
-bool is_prime(uint64_t p)
-{
-	if (p % 2 == 0) return false; // all prime numbers are odd
-
-	const uint64_t stop = static_cast<uint64_t>(std::sqrt(p));
-
-	for (uint64_t i = 3; i <= stop; i += 2)
-	{
-		if (p % i == 0) return false;
-	}
-
-	return true;
-}
-
+// type of message manager that needs to know all message types
 using message_manager_type = clime::message_manager<message_for_prime_checker, message_for_prime_printer>;
+
+// helper function that checks if a number is prime
+bool is_prime(uint64_t p);
 
 int main(int argc, char**argv)
 {
@@ -77,38 +43,54 @@ int main(int argc, char**argv)
 	message_manager.set_logger<message_for_prime_checker>([](std::shared_ptr<message_for_prime_checker> msg, bool sending)
 	{
 		// Each and every message_for_prime_checker that is sent will arrive here, so this can be used for easy logging of one or all message types.
+		// bool 'sending' will be true for message that are sent and false for messages that are received
 	});
 
-	uint64_t p = start_prime + (start_prime%2==0); // make it odd, as we iterate with step size 2
-
-	std::list<std::shared_ptr<clime::message_handler<message_for_prime_checker, message_manager_type>>> prime_checker_handlers;
-	
-	clime::message_handler<message_for_prime_printer, message_manager_type> handle_msg_for_prime_printer(message_manager, [](const message_for_prime_printer& msg)
-	{
-		std::cout << msg.get_prime() << " ";
-	}, [&]() // handler for no message from prime checker: we send requests to the prime checker
-	{
-		auto msg = std::make_shared<message_for_prime_checker>(p);
-		message_manager.send_message(msg, 100); // in case prime checker's message queue has reached 100 messages, wait until it processed one
-		p += 2; // proceed to the next odd number to check if it is prime
-	});
-
+	// start n_threads prime checker threads that handle message type message_for_prime_checker
 	for (int i = 0; i < n_threads; i++)
 	{
-		prime_checker_handlers.emplace_back(std::make_shared<clime::message_handler<message_for_prime_checker, message_manager_type>>(message_manager, [&](const message_for_prime_checker& msg)
+		message_manager.add_handler<message_for_prime_checker>([&](const message_for_prime_checker& msg)
 		{
-			const uint64_t number_to_check = msg.get_number();
-
-			if (is_prime(number_to_check))
+			if (is_prime(msg.number_to_check))
 			{
 				// We found that the number is prime, so send a message back to the printer.
-				auto msg = std::make_shared<message_for_prime_printer>(number_to_check);
-				message_manager.send_message(msg);
+				auto msg_to_printer = std::shared_ptr<message_for_prime_printer>(new message_for_prime_printer{ msg.number_to_check });
+				message_manager.send_message(msg_to_printer);
 			}
-		}));
+		});
 	}
+
+	uint64_t p = start_prime + (start_prime % 2 == 0); // make it odd, as we iterate with step size 2
+
+	// start prime printer thread that handles message type message_for_prime_printer and sends requests (i.e. message_for_prime_checker) to prime checker threads
+	message_manager.add_handler<message_for_prime_printer>
+		([](const message_for_prime_printer& msg)
+		{
+			std::cout << msg.prime_number << " ";
+		},
+		nullptr, // we do not provide an exception handler in this sample
+		[&]() // handler for no message from prime checker: we send requests to the prime checker
+		{
+			auto msg_to_checker = std::shared_ptr<message_for_prime_checker>(new message_for_prime_checker{ p });
+			message_manager.send_message(msg_to_checker, 100); // in case prime checker's message queue has reached 100 messages, wait until it processed one
+			p += 2; // proceed to the next odd number to check if it is prime
+		});
 
 	std::this_thread::sleep_for(std::chrono::seconds(time_limit));
 
 	return 0;
+}
+
+bool is_prime(uint64_t p)
+{
+	if (p % 2 == 0) return false; // all prime numbers are odd
+
+	const uint64_t stop = static_cast<uint64_t>(std::sqrt(p));
+
+	for (uint64_t i = 3; i <= stop; i += 2)
+	{
+		if (p % i == 0) return false;
+	}
+
+	return true;
 }
