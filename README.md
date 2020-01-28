@@ -204,7 +204,7 @@ int main()
 
   my_message_manager.add_handler<my_message>([&](const my_message& msg)
   {
-      std::cout << msg.number << std::endl;
+      worker.handle_message(msg);
   });
 
   std::this_thread::sleep_for(std::chrono::seconds(5));
