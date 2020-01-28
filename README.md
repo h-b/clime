@@ -14,7 +14,7 @@
     - [Basics](#basics)
     - [Exception handling](#exception-handling)
     - [Handling idle times](#handling-idle-times)
-    - [Avoiding deadlocks](#avoiding-deadlocks)
+    - [How to shutdown](#how-to-shutdown)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -68,7 +68,7 @@ struct my_message
 
 This message just carries a number. Note that when sending and receiving an instance of a message, it will never be copied, because message instances are encapsulated in a `std::shared_ptr`. So a message class can also include larger things like images. Usually you will have an `enum` in your message class so you can distinguish several messages that are received by the same handler thread.
 
-On the other hand, it is possible to use a basic type like `int` as a message type. But `message_manager` needs to make a difference between message types, so in case you plan to use several message types it makes sense to encapsulate them in a struct, even if they only carry basic types. For logging (see below), it makes sense to implement a method `to_string` in each of your message types.
+On the other hand, it is possible to use a basic type like `int` as a message type. But `message_manager` needs to make a difference between message types, so in case you plan to use several message types it makes sense to encapsulate them in a struct, even if they only carry basic types. For logging (see [below](#how-to-log-all-messages)), it makes sense to implement a method `to_string` in each of your message types.
 
 First you need to tell the library about all message types that you will be sending and receiving. You do this by creating an instance of `clime::message_manager`. In this example, you would write:
 
@@ -142,7 +142,7 @@ As you might have an `enum` in your message type, it makes sense to implement a 
 
 ### Basics
 
-If you use `clime::receive_message` directly, you have to care about a message handler thread yourself. Instead, you can use `message_manager::add_handler` to register your own callback function for a certain message type. For example
+If you use `clime::receive_message` directly, you have to care about a message handler thread yourself. Usually you will only make use of `clime::receive_message` in the main thread, for example the UI thread. Instead, you can use `message_manager::add_handler` to register your own callback function for a certain message type. For example
 
 ```cpp
 my_message_manager.add_handler<my_message>([&](const my_message& msg)
@@ -151,17 +151,17 @@ my_message_manager.add_handler<my_message>([&](const my_message& msg)
 });
 ```
 
-You can add several handlers for the same message type, which will setup several threads.
+For each call of `add_handler` a corresponding message thread will be started. For load distribution, you can add several handlers for the same message type, which will setup several threads. All threads will be stopped on destruction of `clime::message_handler` (or if its method `dispose()` is called, see [below](#how-to-shutdown)).
 
 ### Exception handling
 
-You do not need to add an exception handler to your callback function, because this is provided by the library. To catch these exceptions, add a second argument to `add_handler` with a callback function that accepts `const std::exception&`, for example
+You do not need to add an exception handler to your callback function, because this is provided by the library. To implement special handling of exceptions, add a second argument to `add_handler` with a callback function that accepts `const std::exception&`, for example
 
 ```cpp
 my_message_manager.add_handler<my_message>([&](const my_message& msg)
 {
 	// your message handler for msg
-}),[&](const std::exception& ex)
+}), [&](const std::exception& ex)
 {
 	// your exception handler for ex
 });
@@ -175,17 +175,16 @@ Default behaviour is that the thread will wait for messages of the given type. Y
 my_message_manager.add_handler<my_message>([&](const my_message& msg)
 {
 	// your message handler for msg
-}),[&](const std::exception& ex)
+}), [&](const std::exception& ex)
 {
 	// your exception handler for ex
-},
-[&]()
+}, [&]()
 {
 	// your idle handler
 });
 ```
 
-### Avoiding deadlocks
+### How to shutdown
 
 Of course the object instances that contain your handlers must have at least the same lifetime as the instance of `clime::message_manager`, otherwise `clime::message_manager` will call methods of destroyed objects. If this is not possible, for example when these objects use the instance of `clime::message_manager` themselves to send messages, you can call `message_manager::dispose()` prior destruction of the instances that contain the handlers, so `message_manager` will stop calling the callback functions that you had registerd with `add_handler`. For example:
 
@@ -200,7 +199,7 @@ struct my_message
 
 int main()
 {
-  clime::message_manager<my_message> my_message_manager; // in this sample, message type is simple int
+  clime::message_manager<my_message> my_message_manager;
   my_worker worker(my_message_manager);
 
   my_message_manager.add_handler<my_message>([&](const my_message& msg)
