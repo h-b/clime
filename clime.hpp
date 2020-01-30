@@ -253,12 +253,12 @@ namespace clime
 		{
 			manager_future_.send_message(std::make_shared<start_op>());
 
-			manager_future_.add_handler<start_op>([&](std::shared_ptr<start_op>)
+			manager_future_.template add_handler<start_op>([&](std::shared_ptr<start_op>)
 			{
 				manager_future_.send_message(std::make_shared<Result>(async_op()));
 			});
 
-			manager_future_.add_handler<Result>([&](std::shared_ptr<Result> result)
+			manager_future_.template add_handler<Result>([&](std::shared_ptr<Result> result)
 			{
 				{
 					std::lock_guard<std::mutex> lock(mtx_);
@@ -283,7 +283,7 @@ namespace clime
 		std::mutex mtx_;
 		std::condition_variable cv_;
 		std::shared_ptr<const Result> result_;
-	}; 
+	};
 }
 
 #endif // CLIME_HPP

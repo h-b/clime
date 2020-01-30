@@ -145,7 +145,7 @@ As you might have an `enum` in your message type, it makes sense to implement a 
 If you use `clime::receive_message` directly, you have to care about a message handler thread yourself. Usually you will only make use of `clime::receive_message` in the main thread, for example the UI thread. Instead, you can use `message_manager::add_handler` to register your own callback function for a certain message type. For example
 
 ```cpp
-my_message_manager.add_handler<my_message>([&](const my_message& msg)
+my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
 {
 	std::cout << msg.number << std::endl;
 });
@@ -158,7 +158,7 @@ For each call of `add_handler` a corresponding message thread will be started. F
 You do not need to add an exception handler to your callback function, because this is provided by the library. To implement special handling of exceptions, add a second argument to `add_handler` with a callback function that accepts `const std::exception&`, for example
 
 ```cpp
-my_message_manager.add_handler<my_message>([&](const my_message& msg)
+my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
 {
 	// your message handler for msg
 }), [&](const std::exception& ex)
@@ -172,7 +172,7 @@ my_message_manager.add_handler<my_message>([&](const my_message& msg)
 Default behaviour is that the thread will wait for messages of the given type. You may want to keep the thread busy with other things when there is no message, for example check for timeouts etc. To do this, just add a third argument with a callback function handling idle times, e. g.
 
 ```cpp
-my_message_manager.add_handler<my_message>([&](const my_message& msg)
+my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
 {
 	// your message handler for msg
 }), [&](const std::exception& ex)
