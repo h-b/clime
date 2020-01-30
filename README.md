@@ -147,7 +147,7 @@ If you use `clime::receive_message` directly, you have to care about a message h
 ```cpp
 my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
 {
-	std::cout << msg.number << std::endl;
+	std::cout << msg->number << std::endl;
 });
 ```
 
@@ -202,7 +202,7 @@ int main()
   clime::message_manager<my_message> my_message_manager;
   my_worker worker(my_message_manager);
 
-  my_message_manager.add_handler<my_message>([&](const my_message& msg)
+  my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
   {
       worker.handle_message(msg);
   });
