@@ -33,50 +33,60 @@ int main(int argc, char**argv)
 		return 1;
 	}
 	
+	// this runs is_prime of a large number in parallel to the main example below
+	const uint64_t demoFutureTest = 1000000000000873;
+	clime::future<bool> isPrime([demoFutureTest]() { return is_prime(demoFutureTest); });
+
 	const uint64_t start_prime = std::atoll(argv[1]);
 	const int       time_limit = std::atoi(argv[2]);
 	const int        n_threads = std::atoi(argv[3]);
 	
-	message_manager_type message_manager;
-
-	// just a sample how logging is possible - We do not really log in this sample.
-	message_manager.set_logger<message_for_prime_checker>([](std::shared_ptr<message_for_prime_checker> msg, bool sending)
 	{
-		// Each and every message_for_prime_checker that is sent will arrive here, so this can be used for easy logging of one or all message types.
-		// bool 'sending' will be true for message that are sent and false for messages that are received
-	});
+		message_manager_type message_manager;
 
-	// start n_threads prime checker threads that handle message type message_for_prime_checker
-	for (int i = 0; i < n_threads; i++)
-	{
-		message_manager.add_handler<message_for_prime_checker>([&](const message_for_prime_checker& msg)
+		// just a sample how logging is possible - We do not really log in this sample.
+		message_manager.set_logger<message_for_prime_checker>([](std::shared_ptr<message_for_prime_checker> msg, bool sending)
 		{
-			if (is_prime(msg.number_to_check))
-			{
-				// We found that the number is prime, so send a message back to the printer.
-				auto msg_to_printer = std::shared_ptr<message_for_prime_printer>(new message_for_prime_printer{ msg.number_to_check });
-				message_manager.send_message(msg_to_printer);
-			}
+			// Each and every message_for_prime_checker that is sent will arrive here, so this can be used for easy logging of one or all message types.
+			// bool 'sending' will be true for message that are sent and false for messages that are received
 		});
+
+		// start n_threads prime checker threads that handle message type message_for_prime_checker
+		for (int i = 0; i < n_threads; i++)
+		{
+			message_manager.add_handler<message_for_prime_checker>([&](std::shared_ptr<message_for_prime_checker> msg)
+			{
+				if (is_prime(msg->number_to_check))
+				{
+					// We found that the number is prime, so send a message back to the printer.
+					auto msg_to_printer = std::shared_ptr<message_for_prime_printer>(new message_for_prime_printer{ msg->number_to_check });
+					message_manager.send_message(msg_to_printer);
+				}
+			});
+		}
+	
+		uint64_t p = start_prime + (start_prime % 2 == 0); // make it odd, as we iterate with step size 2
+
+		std::cout << "Calculating prime numbers in " << n_threads << " thread(s) for " << time_limit << " seconds, starting from " << p << "..." << std::endl;
+
+		// start prime printer thread that handles message type message_for_prime_printer and sends requests (i.e. message_for_prime_checker) to prime checker threads
+		message_manager.add_handler<message_for_prime_printer>
+			([](std::shared_ptr<message_for_prime_printer> msg)
+			{
+				std::cout << msg->prime_number << " ";
+			},
+			nullptr, // we do not provide an exception handler in this sample
+			[&]() // handler for no message from prime checker: we send requests to the prime checker
+			{
+				auto msg_to_checker = std::shared_ptr<message_for_prime_checker>(new message_for_prime_checker{ p });
+				message_manager.send_message(msg_to_checker, 100); // in case prime checker's message queue has reached 100 messages, wait until it processed one
+				p += 2; // proceed to the next odd number to check if it is prime
+			});
+
+		std::this_thread::sleep_for(std::chrono::seconds(time_limit));
 	}
 
-	uint64_t p = start_prime + (start_prime % 2 == 0); // make it odd, as we iterate with step size 2
-
-	// start prime printer thread that handles message type message_for_prime_printer and sends requests (i.e. message_for_prime_checker) to prime checker threads
-	message_manager.add_handler<message_for_prime_printer>
-		([](const message_for_prime_printer& msg)
-		{
-			std::cout << msg.prime_number << " ";
-		},
-		nullptr, // we do not provide an exception handler in this sample
-		[&]() // handler for no message from prime checker: we send requests to the prime checker
-		{
-			auto msg_to_checker = std::shared_ptr<message_for_prime_checker>(new message_for_prime_checker{ p });
-			message_manager.send_message(msg_to_checker, 100); // in case prime checker's message queue has reached 100 messages, wait until it processed one
-			p += 2; // proceed to the next odd number to check if it is prime
-		});
-
-	std::this_thread::sleep_for(std::chrono::seconds(time_limit));
+	std::cout << std::endl << "In addition, we parallelly calculated if " << demoFutureTest << " is prime: " << (*isPrime.get() ? "yes" : "no") << std::endl;
 
 	return 0;
 }

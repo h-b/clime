@@ -55,7 +55,7 @@ namespace clime
 		{
 		public:
 			message_handler(message_manager& msg_manager,
-							std::function<void(const MessageType& message_type)> on_message,
+							std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
 							std::function<void(const std::exception & exception)> on_exception = nullptr,
 							std::function<void()> on_idle=nullptr)
 				: msg_manager_(msg_manager)
@@ -90,7 +90,7 @@ namespace clime
 			std::function<void(const std::exception& exception)> on_exception_;
 			std::thread thread_;
 
-			void run(std::function<void(const MessageType& message_type)> on_message,
+			void run(std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
 					 std::function<void()> on_idle)
 			{
 				const std::runtime_error unknown_exception("unknown exception");
@@ -105,7 +105,7 @@ namespace clime
 						{
 							if (incoming_message)
 							{
-								on_message(*incoming_message);
+								on_message(incoming_message);
 							}
 							else if (on_idle)
 							{
@@ -227,7 +227,7 @@ namespace clime
 		
 		template<typename MessageType>
 		void add_handler(
-				std::function<void(const MessageType& message_type)> on_message,
+				std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
 				std::function<void(const std::exception& exception)> on_exception=nullptr,
 				std::function<void()> on_idle=nullptr)
 		{
@@ -244,6 +244,46 @@ namespace clime
 		std::condition_variable cv_;
 		std::atomic<bool>running_{ true };
 	};
+
+	template<typename Result>
+	class future
+	{
+	public:
+		future(std::function<Result()> async_op)
+		{
+			manager_future_.send_message(std::make_shared<start_op>());
+
+			manager_future_.add_handler<start_op>([&](std::shared_ptr<start_op>)
+			{
+				manager_future_.send_message(std::make_shared<Result>(async_op()));
+			});
+
+			manager_future_.add_handler<Result>([&](std::shared_ptr<Result> result)
+			{
+				{
+					std::lock_guard<std::mutex> lock(mtx_);
+					result_ = result;
+				}
+				cv_.notify_one();
+			});
+		}
+
+		std::shared_ptr<const Result> get()
+		{
+			{
+				std::unique_lock<std::mutex> lock(mtx_);
+				cv_.wait(lock, [&] {return static_cast<bool>(result_); });
+			}
+			return result_;
+		}
+
+	private:
+		struct start_op {};
+		message_manager<start_op, bool> manager_future_;
+		std::mutex mtx_;
+		std::condition_variable cv_;
+		std::shared_ptr<const Result> result_;
+	}; 
 }
 
 #endif // CLIME_HPP
