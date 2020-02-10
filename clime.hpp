@@ -44,6 +44,22 @@ SOFTWARE.
 #error You need at least C++14 for clime.hpp. Please check example/CMakeLists.txt on how to set compiler options. Reason: This code uses std::get<T> to extract the elements of a std::tuple whose type is T.
 #endif
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#undef min
+#undef max
+#else
+#include <sys/prctl.h>
+#endif
+
+#ifdef _MSC_VER
+#define __DEMANGLED_CLASS_NAME(demangling_status) typeid(*this).name()
+#else
+#include <cxxabi.h>
+#define __DEMANGLED_CLASS_NAME(demangling_status) abi::__cxa_demangle(typeid(*this).name(),0,0,&demangling_status)
+#endif
+
 namespace clime
 {
 	template<typename... MessageTypes>
@@ -60,8 +76,16 @@ namespace clime
 							std::function<void()> on_idle=nullptr)
 				: msg_manager_(msg_manager)
 				, on_exception_(on_exception)
+				, thread_name_(__DEMANGLED_CLASS_NAME(demangling_status_))
 				, thread_(std::thread([=]
 				{
+					auto pos = thread_name_.rfind("message_handler");
+					if (pos != std::string::npos)
+					{
+						thread_name_ = thread_name_.substr(pos);
+					}
+
+					msg_manager_.set_thread_name(thread_name_.c_str());
 					run(on_message, on_idle);
 				}))
 			{
@@ -88,6 +112,8 @@ namespace clime
 		protected:
 			message_manager& msg_manager_;
 			std::function<void(const std::exception& exception)> on_exception_;
+			std::string thread_name_;
+			int demangling_status_;
 			std::thread thread_;
 
 			void run(std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
@@ -151,6 +177,14 @@ namespace clime
 			}
 			cv_.notify_one();
 			message_handler_.reset();
+		}
+
+		template<typename MessageType>
+		size_t size()
+		{
+			using QueueType = std::queue<std::shared_ptr<MessageType>>;
+			std::lock_guard<std::mutex> lock(mutex_messages_);
+			return std::get<QueueType>(messages_).size();
 		}
 
 		template<typename MessageType>
@@ -236,6 +270,14 @@ namespace clime
 			message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle));
 		}
 
+		template<typename MessageType>
+		void clear_handlers()
+		{
+			using HandlerListType = std::list<std::shared_ptr<message_handler<MessageType>>>;
+			HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
+			message_handler_list.clear(); // ends all message_handler threads that handled MessageType
+		}
+
 	protected:
 		std::tuple<std::queue<std::shared_ptr<MessageTypes>>...> messages_;
 		std::tuple<std::function<void(std::shared_ptr<MessageTypes>,bool)>...> logger_;
@@ -243,29 +285,118 @@ namespace clime
 		std::mutex mutex_messages_;
 		std::condition_variable cv_;
 		std::atomic<bool>running_{ true };
+
+	private:
+#ifdef _WIN32
+		#pragma pack(push,8)
+		typedef struct tagTHREADNAME_INFO
+		{
+		   DWORD dwType; // Must be 0x1000.
+		   LPCSTR szName; // Pointer to name (in user addr space).
+		   DWORD dwThreadID; // Thread ID (-1=caller thread).
+		   DWORD dwFlags; // Reserved for future use, must be zero.
+		} THREADNAME_INFO;
+		#pragma pack(pop)
+
+		void set_thread_name(uint32_t dwThreadID, const char* thread_name) const
+		{
+			const DWORD MS_VC_EXCEPTION=0x406D1388;
+			THREADNAME_INFO info;
+			info.dwType = 0x1000;
+			info.szName = thread_name;
+			info.dwThreadID = dwThreadID;
+			info.dwFlags = 0;
+
+			__try
+			{
+				RaiseException( MS_VC_EXCEPTION, 0, sizeof(info)/sizeof(ULONG_PTR), (ULONG_PTR*)&info );
+			}
+			__except(EXCEPTION_EXECUTE_HANDLER)
+			{
+			}
+		}
+#endif
+	public:
+#ifdef _WIN32
+		void set_thread_name(const char* thread_name) const
+		{
+			set_thread_name(GetCurrentThreadId(), thread_name);
+		}
+
+		void set_thread_name(const std::thread& thread, const char* thread_name) const
+		{
+			DWORD thread_id = ::GetThreadId( static_cast<HANDLE>( thread.native_handle() ) );
+			set_thread_name(thread_id, thread_name);
+		}
+#else
+		void set_thread_name(std::thread& thread, const char* thread_name) const
+		{
+		   pthread_setname_np(thread.native_handle(), thread_name);
+		}
+
+		void set_thread_name(const char* thread_name) const
+		{
+		  prctl(PR_SET_NAME,thread_name,0,0,0);
+		}
+#endif
 	};
 
 	template<typename Result>
 	class future
 	{
 	public:
-		future(std::function<Result()> async_op)
-		{
-			manager_future_.send_message(std::make_shared<start_op>());
+		future() = default;
 
-			manager_future_.template add_handler<start_op>([&](std::shared_ptr<start_op>)
+		template<typename AsyncOp>
+		future(const AsyncOp& async_op)
+		{
+			operator=(async_op);
+		}
+
+		template<typename AsyncOp>
+		void operator =(const AsyncOp& async_op)
+		{
+			manager_future_.template clear_handlers<start_op>(); // remove any previous handlers - a future always has only 1 future function
+			
+			manager_future_.template add_handler<start_op>([&, async_op](std::shared_ptr<start_op>)
 			{
 				manager_future_.send_message(std::make_shared<Result>(async_op()));
 			});
+
+			manager_future_.send_message(std::make_shared<start_op>());
 
 			manager_future_.template add_handler<Result>([&](std::shared_ptr<Result> result)
 			{
 				{
 					std::lock_guard<std::mutex> lock(mtx_);
-					result_ = result;
+					if (!result_)
+					{
+						// While the future function was running, result_ may have been set by operator =(const Result& result),
+						// so we only set result_ if it is not yet initialized.
+						result_ = result;
+					}
 				}
 				cv_.notify_one();
 			});
+		}
+
+		void operator =(const Result& result) // directly sets results without future function
+		{
+			{
+				std::lock_guard<std::mutex> lock(mtx_);
+				result_ = std::make_shared<Result>(result);
+			}
+			cv_.notify_one();
+		}
+
+		operator const Result()
+		{
+			std::unique_lock<std::mutex> lock(mtx_);
+			cv_.wait(lock, [&]
+			{
+				return manager_future_.template size<start_op>()==0 || static_cast<bool>(result_);
+			});
+			return result_ ? *result_:Result(); // if there is no future function, return default value of its return type
 		}
 
 		std::shared_ptr<const Result> get()
@@ -279,10 +410,22 @@ namespace clime
 
 	private:
 		struct start_op {};
-		message_manager<start_op, bool> manager_future_;
+		message_manager<start_op, Result> manager_future_;
 		std::mutex mtx_;
 		std::condition_variable cv_;
 		std::shared_ptr<const Result> result_;
+	};
+
+	class thread_manager
+	{
+	public:
+		thread_manager(std::function<void()> on_idle, std::function<void(const std::exception& exception)> on_exception = nullptr)
+		{
+			message_manager_.add_handler<int>(nullptr, on_exception, on_idle);
+		}
+
+	private:
+		message_manager<int> message_manager_;
 	};
 }
 

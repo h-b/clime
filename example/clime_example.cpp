@@ -22,6 +22,11 @@ using message_manager_type = clime::message_manager<message_for_prime_checker, m
 // helper function that checks if a number is prime
 bool is_prime(uint64_t p);
 
+bool demoFutureTest()
+{
+	return is_prime(1000000000000873);
+}
+
 int main(int argc, char**argv)
 {
 	if (argc != 4)
@@ -33,9 +38,23 @@ int main(int argc, char**argv)
 		return 1;
 	}
 	
-	// this runs is_prime of a large number in parallel to the main example below
-	const uint64_t demoFutureTest = 1000000000000873;
-	clime::future<bool> isPrime([demoFutureTest]() { return is_prime(demoFutureTest); });
+	// run is_prime of large numbes in parallel to the main example below. We show 7 different uses.
+	clime::future<bool> isPrime1 = demoFutureTest;
+	clime::future<bool> isPrime2(demoFutureTest);
+	clime::future<bool> isPrime3 = [=]()
+	{
+		return is_prime(1000000000000873);
+	};
+	clime::future<bool> isPrime4([=]()
+	{
+		return is_prime(1000000000000873);
+	});
+	clime::future<bool> isPrime5;
+	isPrime5 = demoFutureTest;
+	clime::future<bool> futureWithoutFunction;
+	clime::future<bool> changeFutureResult;
+	changeFutureResult = demoFutureTest;
+	changeFutureResult = false;
 
 	const uint64_t start_prime = std::atoll(argv[1]);
 	const int       time_limit = std::atoi(argv[2]);
@@ -86,7 +105,14 @@ int main(int argc, char**argv)
 		std::this_thread::sleep_for(std::chrono::seconds(time_limit));
 	}
 
-	std::cout << std::endl << "In addition, we parallelly calculated if " << demoFutureTest << " is prime: " << (*isPrime.get() ? "yes" : "no") << std::endl;
+	std::cout << std::endl << "In addition, we parallelly calculated other prime numbers. Results were: " 
+		<< (isPrime1 ? "yes" : "no") << ", "
+		<< (isPrime2 ? "yes" : "no") << ", "
+		<< (isPrime3 ? "yes" : "no") << ", "
+		<< (isPrime4 ? "yes" : "no") << ", "
+		<< (isPrime5 ? "yes" : "no") << ", "
+        << (futureWithoutFunction ? "yes" : "no") << ", "
+		<< (changeFutureResult ? "yes" : "no") << std::endl;
 
 	return 0;
 }
