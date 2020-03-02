@@ -212,7 +212,34 @@ namespace clime
 		template<typename MessageType, typename Rep, typename Period>
 		void send_message(std::shared_ptr<MessageType> msg, const std::chrono::duration<Rep, Period>& delay_duration)
 		{
-			(void)std::async(std::launch::async, [msg,delay_duration,this]()
+			std::lock_guard<std::mutex> lock(mutex_future_pool_);
+			std::future<void>* future = nullptr;
+			size_t last_ready_future = future_pool_.size();
+
+			for (size_t i=0; i<future_pool_.size(); ++i)
+			{
+				if (future_pool_[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready)
+				{
+					if (future==nullptr)
+					{
+						future = &future_pool_[i];
+					}
+					else
+					{
+						last_ready_future = i;
+					}
+				}
+			}
+
+			future_pool_.resize(last_ready_future);
+
+			if (future == nullptr)
+			{
+				future_pool_.emplace_back(std::future<void>());
+				future = &future_pool_.back();
+			}
+
+			*future = std::async(std::launch::async, [msg,delay_duration,this]()
 			{
 				std::this_thread::sleep_for(delay_duration);
 				send_message(msg);
@@ -285,6 +312,8 @@ namespace clime
 		std::mutex mutex_messages_;
 		std::condition_variable cv_;
 		std::atomic<bool>running_{ true };
+		std::mutex mutex_future_pool_;
+		std::vector<std::future<void>> future_pool_;
 
 	private:
 #ifdef _WIN32
@@ -357,7 +386,7 @@ namespace clime
 		void operator =(const AsyncOp& async_op)
 		{
 			manager_future_.template clear_handlers<start_op>(); // remove any previous handlers - a future always has only 1 future function
-			
+
 			manager_future_.template add_handler<start_op>([&, async_op](std::shared_ptr<start_op>)
 			{
 				manager_future_.send_message(std::make_shared<Result>(async_op()));
@@ -397,6 +426,12 @@ namespace clime
 				return manager_future_.template size<start_op>()==0 || static_cast<bool>(result_);
 			});
 			return result_ ? *result_:Result(); // if there is no future function, return default value of its return type
+		}
+
+		bool ready()
+		{
+			std::lock_guard<std::mutex> lock;
+			return result_;
 		}
 
 		std::shared_ptr<const Result> get()
