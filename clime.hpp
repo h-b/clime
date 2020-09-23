@@ -430,7 +430,7 @@ namespace clime
 
 		bool ready()
 		{
-			std::lock_guard<std::mutex> lock;
+			std::lock_guard<std::mutex> lock(mtx_);
 			return result_;
 		}
 
