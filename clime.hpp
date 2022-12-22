@@ -267,7 +267,7 @@ namespace clime
             cv_.notify_one();
 
             using FunctionType = std::function<void(std::shared_ptr<MessageType>, bool)>;
-            if (std::get<FunctionType>(logger_) != nullptr)
+            if (std::get<FunctionType>(logger_) != nullptr && result)
             {
                 std::get<FunctionType>(logger_)(result, false);
             }
