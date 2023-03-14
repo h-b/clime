@@ -78,7 +78,7 @@ namespace clime
     } THREADNAME_INFO;
     #pragma pack(pop)
 
-    inline void set_thread_name(uint32_t dwThreadID, const char* thread_name) const
+    inline void set_thread_name(uint32_t dwThreadID, const char* thread_name)
     {
         const DWORD     MS_VC_EXCEPTION = 0x406D1388;
         THREADNAME_INFO info;
@@ -101,7 +101,7 @@ namespace clime
         set_thread_name(GetCurrentThreadId(), thread_name);
     }
 
-    inline void set_thread_name(const std::thread& thread, const char* thread_name)
+    inline void set_thread_name(std::thread& thread, const char* thread_name)
     {
         DWORD thread_id = ::GetThreadId(static_cast<HANDLE>(thread.native_handle()));
         set_thread_name(thread_id, thread_name);
@@ -361,7 +361,7 @@ namespace clime
         {
             using HandlerListType                 = std::list<std::shared_ptr<message_handler<MessageType>>>;
             HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
-            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit));
+            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit, thread_name));
         }
 
         template <typename MessageType>
