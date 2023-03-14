@@ -28,17 +28,17 @@ SOFTWARE.
 #ifndef CLIME_HPP
 #define CLIME_HPP
 
-#include <memory>
-#include <queue>
-#include <list>
-#include <mutex>
+#include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <functional>
-#include <utility>
 #include <future>
-#include <chrono>
+#include <list>
+#include <memory>
+#include <mutex>
+#include <queue>
 #include <thread>
-#include <atomic>
+#include <utility>
 
 #if __cplusplus < 201402L
     #error You need at least C++14 for clime.hpp. Please check example/CMakeLists.txt on how to set compiler options. Reason: This code uses std::get<T> to extract the elements of a std::tuple whose type is T.
@@ -67,6 +67,67 @@ SOFTWARE.
 
 namespace clime
 {
+#ifdef _WIN32
+    #pragma pack(push, 8)
+    typedef struct tagTHREADNAME_INFO
+    {
+        DWORD  dwType;     // Must be 0x1000.
+        LPCSTR szName;     // Pointer to name (in user addr space).
+        DWORD  dwThreadID; // Thread ID (-1=caller thread).
+        DWORD  dwFlags;    // Reserved for future use, must be zero.
+    } THREADNAME_INFO;
+    #pragma pack(pop)
+
+    inline void set_thread_name(uint32_t dwThreadID, const char* thread_name) const
+    {
+        const DWORD     MS_VC_EXCEPTION = 0x406D1388;
+        THREADNAME_INFO info;
+        info.dwType     = 0x1000;
+        info.szName     = thread_name;
+        info.dwThreadID = dwThreadID;
+        info.dwFlags    = 0;
+
+        __try
+        {
+            RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+    }
+
+    inline void set_thread_name(const char* thread_name)
+    {
+        set_thread_name(GetCurrentThreadId(), thread_name);
+    }
+
+    inline void set_thread_name(const std::thread& thread, const char* thread_name)
+    {
+        DWORD thread_id = ::GetThreadId(static_cast<HANDLE>(thread.native_handle()));
+        set_thread_name(thread_id, thread_name);
+    }
+#elif defined(__APPLE__)
+    inline void set_thread_name(std::thread& thread, const char* thread_name)
+    {
+        // not possible under darwin
+    }
+
+    inline void set_thread_name(const char* thread_name)
+    {
+        pthread_setname_np(thread_name);
+    }
+#else
+    inline void set_thread_name(std::thread& thread, const char* thread_name)
+    {
+        pthread_setname_np(thread.native_handle(), thread_name);
+    }
+
+    inline void set_thread_name(const char* thread_name)
+    {
+        prctl(PR_SET_NAME, thread_name, 0, 0, 0);
+    }
+#endif
+
     template <typename... MessageTypes>
     class message_manager
     {
@@ -78,10 +139,12 @@ namespace clime
             message_handler(message_manager&                                               msg_manager,
                             std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
                             std::function<void(const std::exception& exception)>           on_exception = nullptr,
-                            std::function<void()>                                          on_idle      = nullptr)
+                            std::function<void()>                                          on_idle      = nullptr,
+                            std::function<void()>                                          on_exit      = nullptr,
+                            const std::string&                                             thread_name  = "")
                 : msg_manager_(msg_manager)
                 , on_exception_(on_exception)
-                , thread_name_(__DEMANGLED_CLASS_NAME(demangling_status_))
+                , thread_name_(thread_name.empty() ? __DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
                 , thread_(std::thread([=]
                                       {
                                           auto pos = thread_name_.rfind("message_handler");
@@ -90,9 +153,12 @@ namespace clime
                                               thread_name_ = thread_name_.substr(pos);
                                           }
 
-                                          msg_manager_.set_thread_name(thread_name_.c_str());
-                                          run(on_message, on_idle);
-                                      }))
+                                          set_thread_name(thread_name_.c_str());
+                                          run(on_message, on_idle); 
+                                          if (on_exit)
+                                          {
+                                            on_exit();
+                                          } }))
             {
             }
 
@@ -184,7 +250,7 @@ namespace clime
         }
 
         template <typename MessageType>
-        size_t size()
+        size_t size() const
         {
             using QueueType = std::queue<std::shared_ptr<MessageType>>;
             std::lock_guard<std::mutex> lock(mutex_messages_);
@@ -244,8 +310,7 @@ namespace clime
             *future = std::async(std::launch::async, [msg, delay_duration, this]()
                                  {
                                      std::this_thread::sleep_for(delay_duration);
-                                     send_message(msg);
-                                 });
+                                     send_message(msg); });
         }
 
         template <typename MessageType>
@@ -290,11 +355,13 @@ namespace clime
         void add_handler(
             std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
             std::function<void(const std::exception& exception)>           on_exception = nullptr,
-            std::function<void()>                                          on_idle      = nullptr)
+            std::function<void()>                                          on_idle      = nullptr,
+            std::function<void()>                                          on_exit      = nullptr,
+            const std::string&                                             thread_name  = "")
         {
             using HandlerListType                 = std::list<std::shared_ptr<message_handler<MessageType>>>;
             HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
-            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle));
+            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit));
         }
 
         template <typename MessageType>
@@ -309,75 +376,11 @@ namespace clime
         std::tuple<std::queue<std::shared_ptr<MessageTypes>>...>                                  messages_;
         std::tuple<std::function<void(std::shared_ptr<MessageTypes>, bool)>...>                   logger_;
         std::shared_ptr<std::tuple<std::list<std::shared_ptr<message_handler<MessageTypes>>>...>> message_handler_;
-        std::mutex                                                                                mutex_messages_;
+        mutable std::mutex                                                                        mutex_messages_;
         std::condition_variable                                                                   cv_;
         std::atomic<bool>                                                                         running_{true};
         std::mutex                                                                                mutex_future_pool_;
         std::vector<std::future<void>>                                                            future_pool_;
-
-    private:
-#ifdef _WIN32
-    #pragma pack(push, 8)
-        typedef struct tagTHREADNAME_INFO
-        {
-            DWORD  dwType;     // Must be 0x1000.
-            LPCSTR szName;     // Pointer to name (in user addr space).
-            DWORD  dwThreadID; // Thread ID (-1=caller thread).
-            DWORD  dwFlags;    // Reserved for future use, must be zero.
-        } THREADNAME_INFO;
-    #pragma pack(pop)
-
-        void set_thread_name(uint32_t dwThreadID, const char* thread_name) const
-        {
-            const DWORD     MS_VC_EXCEPTION = 0x406D1388;
-            THREADNAME_INFO info;
-            info.dwType     = 0x1000;
-            info.szName     = thread_name;
-            info.dwThreadID = dwThreadID;
-            info.dwFlags    = 0;
-
-            __try
-            {
-                RaiseException(MS_VC_EXCEPTION, 0, sizeof(info) / sizeof(ULONG_PTR), (ULONG_PTR*)&info);
-            }
-            __except (EXCEPTION_EXECUTE_HANDLER)
-            {
-            }
-        }
-#endif
-    public:
-#ifdef _WIN32
-        void set_thread_name(const char* thread_name) const
-        {
-            set_thread_name(GetCurrentThreadId(), thread_name);
-        }
-
-        void set_thread_name(const std::thread& thread, const char* thread_name) const
-        {
-            DWORD thread_id = ::GetThreadId(static_cast<HANDLE>(thread.native_handle()));
-            set_thread_name(thread_id, thread_name);
-        }
-#elif defined(__APPLE__)
-        void set_thread_name(std::thread& thread, const char* thread_name) const
-        {
-            // not possible under darwin
-        }
-
-        void set_thread_name(const char* thread_name) const
-        {
-            pthread_setname_np(thread_name);
-        }
-#else
-        void set_thread_name(std::thread& thread, const char* thread_name) const
-        {
-            pthread_setname_np(thread.native_handle(), thread_name);
-        }
-
-        void set_thread_name(const char* thread_name) const
-        {
-            prctl(PR_SET_NAME, thread_name, 0, 0, 0);
-        }
-#endif
     };
 
     template <typename Result>
@@ -413,8 +416,7 @@ namespace clime
                                                                      result_ = result;
                                                                  }
                                                              }
-                                                             cv_.notify_one();
-                                                         });
+                                                             cv_.notify_one(); });
         }
 
         void operator=(const Result& result) // directly sets results without future function
