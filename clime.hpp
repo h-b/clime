@@ -31,6 +31,7 @@ SOFTWARE.
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstddef>
 #include <functional>
 #include <future>
 #include <list>
@@ -250,7 +251,7 @@ namespace clime
         }
 
         template <typename MessageType>
-        size_t size() const
+        std::size_t size() const
         {
             using QueueType = std::queue<std::shared_ptr<MessageType>>;
             std::lock_guard<std::mutex> lock(mutex_messages_);
@@ -282,9 +283,9 @@ namespace clime
         {
             std::lock_guard<std::mutex> lock(mutex_future_pool_);
             std::future<void>*          future            = nullptr;
-            size_t                      last_ready_future = future_pool_.size();
+            std::size_t                 last_ready_future = future_pool_.size();
 
-            for (size_t i = 0; i < future_pool_.size(); ++i)
+            for (std::size_t i = 0; i < future_pool_.size(); ++i)
             {
                 if (future_pool_[i].wait_for(std::chrono::seconds(0)) == std::future_status::ready)
                 {
