@@ -4,7 +4,7 @@ Read the full documentation at README.md or at https://github.com/h-b/clime
 
 MIT License
 
-Copyright (c) 2020 Stefan Zipproth <info@zipproth.de>
+Copyright (c) 2020-2023 Stefan Zipproth <s.zipproth@acrion.ch>
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -60,10 +60,10 @@ SOFTWARE.
 #endif
 
 #ifdef _MSC_VER
-    #define __DEMANGLED_CLASS_NAME(demangling_status) typeid(*this).name()
+    #define CLIME_DEMANGLED_CLASS_NAME(demangling_status) typeid(*this).name()
 #else
     #include <cxxabi.h>
-    #define __DEMANGLED_CLASS_NAME(demangling_status) abi::__cxa_demangle(typeid(*this).name(), 0, 0, &demangling_status)
+    #define CLIME_DEMANGLED_CLASS_NAME(demangling_status) abi::__cxa_demangle(typeid(*this).name(), 0, 0, &(demangling_status))
 #endif
 
 namespace clime
@@ -139,13 +139,13 @@ namespace clime
         public:
             message_handler(message_manager&                                               msg_manager,
                             std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
-                            std::function<void(const std::exception& exception)>           on_exception = nullptr,
-                            std::function<void()>                                          on_idle      = nullptr,
-                            std::function<void()>                                          on_exit      = nullptr,
+                            const std::function<void(const std::exception& exception)>&    on_exception = nullptr,
+                            const std::function<void()>&                                   on_idle      = nullptr,
+                            const std::function<void()>&                                   on_exit      = nullptr,
                             const std::string&                                             thread_name  = "")
                 : msg_manager_(msg_manager)
                 , on_exception_(on_exception)
-                , thread_name_(thread_name.empty() ? __DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
+                , thread_name_(thread_name.empty() ? CLIME_DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
                 , thread_(std::thread([=]
                                       {
                                           auto pos = thread_name_.rfind("message_handler");
@@ -185,11 +185,11 @@ namespace clime
             message_manager&                                     msg_manager_;
             std::function<void(const std::exception& exception)> on_exception_;
             std::string                                          thread_name_;
-            int                                                  demangling_status_;
+            int                                                  demangling_status_{};
             std::thread                                          thread_;
 
             void run(std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
-                     std::function<void()>                                          on_idle)
+                     const std::function<void()>&                                   on_idle)
             {
                 const std::runtime_error unknown_exception("unknown exception");
 
@@ -304,7 +304,7 @@ namespace clime
 
             if (future == nullptr)
             {
-                future_pool_.emplace_back(std::future<void>());
+                future_pool_.emplace_back();
                 future = &future_pool_.back();
             }
 
@@ -391,13 +391,13 @@ namespace clime
         future() = default;
 
         template <typename AsyncOp>
-        future(const AsyncOp& async_op)
+        future(const AsyncOp& async_op) // NOLINT(google-explicit-constructor)
         {
             operator=(async_op);
         }
 
         template <typename AsyncOp>
-        void operator=(const AsyncOp& async_op)
+        future& operator=(const AsyncOp& async_op)
         {
             manager_future_.template clear_handlers<start_op>(); // remove any previous handlers - a future always has only 1 future function
 
@@ -418,18 +418,21 @@ namespace clime
                                                                  }
                                                              }
                                                              cv_.notify_one(); });
+
+            return *this;
         }
 
-        void operator=(const Result& result) // directly sets results without future function
+        future& operator=(const Result& result) // directly sets results without future function
         {
             {
                 std::lock_guard<std::mutex> lock(mtx_);
                 result_ = std::make_shared<Result>(result);
             }
             cv_.notify_one();
+            return *this;
         }
 
-        operator const Result()
+        operator Result() // NOLINT(google-explicit-constructor)
         {
             std::unique_lock<std::mutex> lock(mtx_);
             cv_.wait(lock, [&]
@@ -466,9 +469,9 @@ namespace clime
     class thread_manager
     {
     public:
-        thread_manager(std::function<void()> on_idle, std::function<void(const std::exception& exception)> on_exception = nullptr)
+        explicit thread_manager(std::function<void()> on_idle, std::function<void(const std::exception& exception)> on_exception = nullptr)
         {
-            message_manager_.add_handler<int>(nullptr, on_exception, on_idle);
+            message_manager_.add_handler<int>(nullptr, std::move(on_exception), std::move(on_idle));
         }
 
     private:
