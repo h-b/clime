@@ -167,6 +167,12 @@ namespace clime
             {
                 try
                 {
+                    {
+                        std::lock_guard<std::mutex> lock(msg_manager_.mutex_messages_);
+                        msg_manager_.running_ = false;
+                    }
+                    msg_manager_.cv_.notify_one();
+
                     if (thread_.joinable())
                     {
                         thread_.join();
@@ -242,6 +248,8 @@ namespace clime
 
         void dispose()
         {
+            clear_all_loggers();
+            clear_all_messages();
             {
                 std::lock_guard<std::mutex> lock(mutex_messages_);
                 running_ = false;
@@ -251,11 +259,32 @@ namespace clime
         }
 
         template <typename MessageType>
+        void clear_messages()
+        {
+            std::lock_guard<std::mutex>               lock(mutex_messages_);
+            std::queue<std::shared_ptr<MessageType>>& message_queue = std::get<std::queue<std::shared_ptr<MessageType>>>(messages_);
+            while (!message_queue.empty())
+            {
+                message_queue.pop();
+            }
+        }
+
+        void clear_all_messages()
+        {
+            clear_all_messages_helper(std::index_sequence_for<MessageTypes...>());
+        }
+        
+        template <typename MessageType>
         std::size_t size() const
         {
             using QueueType = std::queue<std::shared_ptr<MessageType>>;
             std::lock_guard<std::mutex> lock(mutex_messages_);
             return std::get<QueueType>(messages_).size();
+        }
+
+        std::size_t total_size() const
+        {
+            return total_size_helper(std::index_sequence_for<MessageTypes...>());
         }
 
         template <typename MessageType>
@@ -365,12 +394,9 @@ namespace clime
             message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit, thread_name));
         }
 
-        template <typename MessageType>
-        void clear_handlers()
+        void clear_all_loggers()
         {
-            using HandlerListType                 = std::list<std::shared_ptr<message_handler<MessageType>>>;
-            HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
-            message_handler_list.clear(); // ends all message_handler threads that handled MessageType
+            clear_logger_helper(std::index_sequence_for<MessageTypes...>());
         }
 
     protected:
@@ -382,6 +408,31 @@ namespace clime
         std::atomic<bool>                                                                         running_{true};
         std::mutex                                                                                mutex_future_pool_;
         std::vector<std::future<void>>                                                            future_pool_;
+
+    private:
+        template <std::size_t... Is>
+        void clear_all_messages_helper(std::index_sequence<Is...>)
+        {
+            (clear_messages<MessageTypes>(), ...);
+        }
+        
+        template <std::size_t... Is>
+        void clear_logger_helper(std::index_sequence<Is...>)
+        {
+            (clear_logger<MessageTypes>(), ...);
+        }
+
+        template <typename MessageType>
+        void clear_logger()
+        {
+            set_logger<MessageType>(nullptr);
+        }
+
+        template <std::size_t... Is>
+        std::size_t total_size_helper(std::index_sequence<Is...>) const
+        {
+            return (size<MessageTypes>() + ...);
+        }
     };
 
     template <typename Result>
