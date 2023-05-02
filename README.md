@@ -186,7 +186,8 @@ my_message_manager.add_handler<my_message>([&](std::shared_ptr<my_message> msg)
 
 ### How to shutdown
 
-Of course the object instances that contain your handlers must have at least the same lifetime as the instance of `clime::message_manager`, otherwise `clime::message_manager` will call methods of destroyed objects. If this is not possible, for example when these objects use the instance of `clime::message_manager` themselves to send messages, you can call `message_manager::dispose()` prior destruction of the instances that contain the handlers, so `message_manager` will stop calling the callback functions that you had registerd with `add_handler`. For example:
+Of course the object instances that contain your handlers must have at least the same lifetime as the instance of `clime::message_manager`, otherwise `clime::message_manager` will call methods of destroyed objects.
+If this is not possible, for example when these objects use the instance of `clime::message_manager` themselves to send messages, you can call `message_manager::dispose()` prior destruction of the instances that contain the handlers, so `message_manager` will stop calling the callback functions that you had registerd with `add_handler`. For example:
 
 ```cpp
 #include <clime.hpp>
@@ -211,3 +212,5 @@ int main()
   my_message_manager.dispose(); // stop calling callbacks, so worker can be safely destroyed
 }
 ```
+
+`message_manager::dispose()` must not be called from inside a message handler.
