@@ -146,7 +146,7 @@ namespace clime
                 : msg_manager_(msg_manager)
                 , on_exception_(on_exception)
                 , thread_name_(thread_name.empty() ? CLIME_DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
-                , thread_(std::thread([=]
+                , thread_(std::thread([this, on_message, on_idle, on_exit]
                                       {
                                           auto pos = thread_name_.rfind("message_handler");
                                           if (pos != std::string::npos)
