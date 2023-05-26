@@ -149,7 +149,7 @@ namespace clime
                 : msg_manager_(msg_manager)
                 , on_exception_(on_exception)
                 , thread_name_(thread_name.empty() ? CLIME_DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
-                , thread_(std::thread([=]
+                , thread_(std::thread([this, on_message, on_idle, on_exit]
                                       {
                                           auto pos = thread_name_.rfind("message_handler");
                                           if (pos != std::string::npos)
@@ -276,7 +276,7 @@ namespace clime
         {
             clear_all_messages_helper(std::index_sequence_for<MessageTypes...>());
         }
-        
+
         template <typename MessageType>
         std::size_t size() const
         {
@@ -397,6 +397,14 @@ namespace clime
             message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit, thread_name));
         }
 
+        template <typename MessageType>
+        void clear_handlers()
+        {
+            using HandlerListType                 = std::list<std::shared_ptr<message_handler<MessageType>>>;
+            HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
+            message_handler_list.clear(); // ends all message_handler threads that handled MessageType
+        }
+
         void clear_all_loggers()
         {
             clear_logger_helper(std::index_sequence_for<MessageTypes...>());
@@ -418,7 +426,7 @@ namespace clime
         {
             (clear_messages<MessageTypes>(), ...);
         }
-        
+
         template <std::size_t... Is>
         void clear_logger_helper(std::index_sequence<Is...>)
         {
