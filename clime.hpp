@@ -52,6 +52,9 @@ SOFTWARE.
     #ifndef NOMINMAX
         #define NOMINMAX
     #endif
+    #ifndef NOMSG
+        #define NOMSG
+    #endif
     #include <windows.h>
 #elif defined(__APPLE__)
     #include <pthread.h>
