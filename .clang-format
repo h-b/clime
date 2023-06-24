@@ -11,7 +11,7 @@ AlignEscapedNewlines: Left # LLVM: Right
 AlignOperands:   AlignAfterOperator # LLVM: Align
 AlignTrailingComments: true
 AllowAllArgumentsOnNextLine: true
-AllowAllConstructorInitializersOnNextLine: true
+AllowAllConstructorInitializersOnNextLine: false # LLVM: true
 AllowAllParametersOfDeclarationOnNextLine: true
 AllowShortEnumsOnASingleLine: false # LLVM: true
 AllowShortBlocksOnASingleLine: Always # LLVM: Never
