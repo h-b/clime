@@ -140,29 +140,12 @@ namespace clime
         class message_handler
         {
         public:
-            message_handler(message_manager&                                               msg_manager,
-                            std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
-                            const std::function<void(const std::exception& exception)>&    on_exception = nullptr,
-                            const std::function<void()>&                                   on_idle      = nullptr,
-                            const std::function<void()>&                                   on_exit      = nullptr,
-                            const std::string&                                             thread_name  = "")
+            message_handler(message_manager&                                            msg_manager,
+                            const std::function<void(const std::exception& exception)>& on_exception = nullptr,
+                            const std::string&                                          thread_name  = {})
                 : msg_manager_(msg_manager)
                 , on_exception_(on_exception)
                 , thread_name_(thread_name.empty() ? CLIME_DEMANGLED_CLASS_NAME(demangling_status_) : thread_name)
-                , thread_(std::thread([this, on_message, on_idle, on_exit]
-                                      {
-                                          auto pos = thread_name_.rfind("message_handler");
-                                          if (pos != std::string::npos)
-                                          {
-                                              thread_name_ = thread_name_.substr(pos);
-                                          }
-
-                                          set_thread_name(thread_name_.c_str());
-                                          run(on_message, on_idle); 
-                                          if (on_exit)
-                                          {
-                                            on_exit();
-                                          } }))
             {
             }
 
@@ -188,6 +171,26 @@ namespace clime
                         on_exception_(ex);
                     }
                 }
+            }
+
+            void start_thread(std::function<void(std::shared_ptr<MessageType> message_type)> on_message,
+                              const std::function<void()>&                                   on_idle,
+                              const std::function<void()>&                                   on_exit)
+            {
+                thread_ = std::thread([this, on_message, on_idle, on_exit]
+                                      {
+                    auto pos = thread_name_.rfind("message_handler");
+                    if (pos != std::string::npos)
+                    {
+                        thread_name_ = thread_name_.substr(pos);
+                    }
+
+                    set_thread_name(thread_name_.c_str());
+                    run(on_message, on_idle);
+                    if (on_exit)
+                    {
+                        on_exit();
+                    } });
             }
 
         protected:
@@ -394,7 +397,8 @@ namespace clime
         {
             using HandlerListType                 = std::list<std::shared_ptr<message_handler<MessageType>>>;
             HandlerListType& message_handler_list = std::get<HandlerListType>(*message_handler_);
-            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_message, on_exception, on_idle, on_exit, thread_name));
+            message_handler_list.emplace_back(std::make_shared<message_handler<MessageType>>(*this, on_exception, thread_name));
+            message_handler_list.back()->start_thread(on_message, on_idle, on_exit);
         }
 
         template <typename MessageType>
