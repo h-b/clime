@@ -37,7 +37,6 @@ SOFTWARE.
 #include <list>
 #include <memory>
 #include <mutex>
-#include <queue>
 #include <thread>
 #include <utility>
 
@@ -139,6 +138,8 @@ namespace clime
         template <typename MessageType>
         class message_handler
         {
+            using MessageTypeWithMetaData = std::pair<std::shared_ptr<MessageType>, int>;
+
         public:
             message_handler(message_manager&                                            msg_manager,
                             const std::function<void(const std::exception& exception)>& on_exception = nullptr,
@@ -267,12 +268,11 @@ namespace clime
         template <typename MessageType>
         void clear_messages()
         {
-            std::lock_guard<std::mutex>               lock(mutex_messages_);
-            std::queue<std::shared_ptr<MessageType>>& message_queue = std::get<std::queue<std::shared_ptr<MessageType>>>(messages_);
-            while (!message_queue.empty())
-            {
-                message_queue.pop();
-            }
+            using MessageTypeWithMetaData = std::pair<std::shared_ptr<MessageType>, int>;
+
+            std::lock_guard<std::mutex>         lock(mutex_messages_);
+            std::list<MessageTypeWithMetaData>& message_queue = std::get<std::list<MessageTypeWithMetaData>>(messages_);
+            message_queue.clear();
         }
 
         void clear_all_messages()
@@ -283,7 +283,9 @@ namespace clime
         template <typename MessageType>
         std::size_t size() const
         {
-            using QueueType = std::queue<std::shared_ptr<MessageType>>;
+            using MessageTypeWithMetaData = std::pair<std::shared_ptr<MessageType>, int>;
+
+            using QueueType = std::list<MessageTypeWithMetaData>;
             std::lock_guard<std::mutex> lock(mutex_messages_);
             return std::get<QueueType>(messages_).size();
         }
@@ -294,15 +296,17 @@ namespace clime
         }
 
         template <typename MessageType>
-        void send_message(std::shared_ptr<MessageType> msg, unsigned int max_queued_messages = 0)
+        void send_message(std::shared_ptr<MessageType> msg, unsigned int max_queued_messages = 0, int target_id = -1)
         {
-            using QueueType = std::queue<std::shared_ptr<MessageType>>;
+            using MessageTypeWithMetaData = std::pair<std::shared_ptr<MessageType>, int>;
+            using QueueType               = std::list<MessageTypeWithMetaData>;
             {
                 std::unique_lock<std::mutex> lock(mutex_messages_);
                 cv_.wait(lock, [&]
                          { return !running_ || max_queued_messages == 0 || std::get<QueueType>(messages_).size() < max_queued_messages; });
 
-                std::get<QueueType>(messages_).emplace(msg);
+                // std::get<QueueType>(messages_).emplace_back(std::make_pair<std::shared_ptr<MessageType>, int>(std::forward<std::shared_ptr<MessageType>>(msg), target_id));
+                std::get<QueueType>(messages_).emplace_back(std::make_pair<std::shared_ptr<MessageType>>(std::forward<std::shared_ptr<MessageType>>(msg), target_id));
             }
             cv_.notify_one();
 
@@ -350,22 +354,40 @@ namespace clime
         }
 
         template <typename MessageType>
-        std::shared_ptr<MessageType> receive_message(bool wait_for_message = false)
+        std::shared_ptr<MessageType> receive_message(bool wait_for_message = false, const int request_target_id = -1)
         {
-            using QueueType = std::queue<std::shared_ptr<MessageType>>;
+            using MessageTypeWithMetaData = std::pair<std::shared_ptr<MessageType>, int>;
+            using QueueType               = std::list<MessageTypeWithMetaData>;
 
             std::shared_ptr<MessageType> result;
             {
                 std::unique_lock<std::mutex> lock(mutex_messages_);
-                cv_.wait(lock, [&]
-                         { return !running_ || !wait_for_message || !std::get<QueueType>(messages_).empty(); });
 
                 auto& messages = std::get<QueueType>(messages_);
 
-                if (!messages.empty())
+                auto message_selector = [&request_target_id](const MessageTypeWithMetaData& message)
                 {
-                    result = messages.front();
-                    messages.pop();
+                    return message.second == -1 || message.second == request_target_id;
+                };
+
+                while (true)
+                {
+                    auto it = std::find_if(messages.begin(), messages.end(), message_selector);
+
+                    if (it != messages.end())
+                    {
+                        result = it->first;
+                        messages.erase(it);
+                        break;
+                    }
+                    else if (!wait_for_message || !running_)
+                    {
+                        break;
+                    }
+                    else
+                    {
+                        cv_.wait(lock);
+                    }
                 }
             }
 
@@ -415,7 +437,7 @@ namespace clime
         }
 
     protected:
-        std::tuple<std::queue<std::shared_ptr<MessageTypes>>...>                                  messages_;
+        std::tuple<std::list<std::pair<std::shared_ptr<MessageTypes>, int>>...>                   messages_;
         std::tuple<std::function<void(std::shared_ptr<MessageTypes>, bool)>...>                   logger_;
         std::shared_ptr<std::tuple<std::list<std::shared_ptr<message_handler<MessageTypes>>>...>> message_handler_;
         mutable std::mutex                                                                        mutex_messages_;
