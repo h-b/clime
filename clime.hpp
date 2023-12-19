@@ -305,8 +305,7 @@ namespace clime
                 cv_.wait(lock, [&]
                          { return !running_ || max_queued_messages == 0 || std::get<QueueType>(messages_).size() < max_queued_messages; });
 
-                // std::get<QueueType>(messages_).emplace_back(std::make_pair<std::shared_ptr<MessageType>, int>(std::forward<std::shared_ptr<MessageType>>(msg), target_id));
-                std::get<QueueType>(messages_).emplace_back(std::make_pair<std::shared_ptr<MessageType>>(std::forward<std::shared_ptr<MessageType>>(msg), target_id));
+                std::get<QueueType>(messages_).emplace_back(msg, target_id);
             }
             cv_.notify_one();
 
